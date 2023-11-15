@@ -1,6 +1,7 @@
 #include "hardware_info.h"
 #include <comdef.h>
 #include <iostream>
+#include <sstream>
 
 #pragma comment(lib,"wbemuuid.lib")
 
@@ -71,32 +72,93 @@ void hardware_info::init_hardware_info()
 
 }
 
-std::string hardware_info::query_hardware_info(std::wstring hardware_name)
+std::map<std::wstring, std::wstring> hardware_info::query_hardware_info(std::wstring hardware_name,std::vector<std::wstring> items)
 {
+	m_mapHardwareInfo.clear();
 	//1.select 
-    std::wstring str_query_statement(L"SELECT * FROM ");
+    std::wstring str_query_statement(L"SELECT ");
+	if (items.size() > 0) {
+		for (int i = 0; i < items.size();i++) {
+			str_query_statement.append(items[i]);
+			if(i < items.size() - 1){
+				str_query_statement.append(L",");
+			}
+		}
+	}
+	else {
+		str_query_statement.append(L"*");
+	}
+	str_query_statement.append(L" FROM ");
+	//std::wstring str_query_statement(L"SELECT * FROM ");
 	str_query_statement.append(hardware_name);
 	HRESULT hr = m_pSvc->ExecQuery(bstr_t(L"WQL"), bstr_t(str_query_statement.c_str()), WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY, nullptr,&m_pEnumerator);
 	if (FAILED(hr)) {
 		std::cout << "ExecQuery failed.\r\n";
 		//m_pWbemlocator->Release();
 		//CoUninitialize();
+		return m_mapHardwareInfo;
 	}
 	//2.transverse the result of the querying
 	IWbemClassObject * pObject = nullptr;
 	ULONG uReturn = 0;
  	while (m_pEnumerator) {
-		hr = m_pEnumerator->Next(0,1,&pObject,&uReturn);
+		hr = m_pEnumerator->Next(/*5000*/WBEM_INFINITE,1,&pObject,&uReturn);//need async
 		if (uReturn == 0) {
 			break;
 		}
 		VARIANT vtProp;
-		hr = pObject->Get(L"Name",0,&vtProp,0,0);
-		if (SUCCEEDED(hr)) {
-			std::wcout << "Processor:" << vtProp.bstrVal << std::endl;
-			VariantClear(&vtProp);
+		VariantInit(&vtProp);
+		std::wstring itemValue;
+		std::wstringstream ss{};
+		for (auto item : items) {
+			hr = pObject->Get(item.c_str(), 0, &vtProp, 0, 0);
+			if (SUCCEEDED(hr)) {
+				//std::cout << "[info] variant type:" << vtProp.vt << std::endl;
+				if (vtProp.vt == VARENUM::VT_I2) {
+					itemValue = std::to_wstring(vtProp.iVal);
+				}
+				else if (vtProp.vt == VARENUM::VT_UI2) {
+					itemValue = std::to_wstring(vtProp.uiVal);
+				}
+				else if (vtProp.vt == VARENUM::VT_INT) {
+					itemValue = std::to_wstring(vtProp.intVal);
+				}
+				else if (vtProp.vt == VARENUM::VT_UINT) {
+					itemValue = std::to_wstring(vtProp.uintVal);
+				}
+				else if (vtProp.vt == VARENUM::VT_I8) {
+					itemValue = std::to_wstring(vtProp.llVal);
+				}
+				else if (vtProp.vt == VARENUM::VT_UI8) {
+					itemValue = std::to_wstring(vtProp.ullVal);
+				}
+				else if (vtProp.vt == VARENUM::VT_I4) {
+					itemValue = std::to_wstring(vtProp.lVal);
+				}
+				else if (vtProp.vt == VARENUM::VT_UI4) {
+					itemValue = std::to_wstring(vtProp.ulVal);
+				}
+				else if (vtProp.vt == VARENUM::VT_BSTR /*|| vtProp.vt == VARENUM::VT_LPSTR || vtProp.vt == VARENUM::VT_LPWSTR*/) {
+					itemValue = (bstr_t)vtProp.bstrVal;
+				}
+				else if (vtProp.vt == VARENUM::VT_NULL) {
+					std::wcout << L"[error]:item " << item.c_str() << L"don't be rettived, variant type:" << vtProp.vt << std::endl;
+					continue;
+				}
+				else {
+					std::wcout <<L"[error]:item " << item.c_str() << L"don't identified, variant type is VARENUM::VT_NULL." << std::endl;
+					continue;
+				}
+				m_mapHardwareInfo[item] = itemValue;
+				ss << item << ":" << m_mapHardwareInfo[item] << "\n";
+				VariantClear(&vtProp);
+			}
+			else {
+				std::cout << "retrive " << item.c_str() << "item failed." << std::endl;
+			}
 		}
+		std::wcout << ss.str();
 		pObject->Release();
 	}
-	return std::string();
+	return m_mapHardwareInfo;
 }
